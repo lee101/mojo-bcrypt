@@ -1,8 +1,7 @@
 """OpenBSD bcrypt_pbkdf, including SHA-512 and EksBlowfish."""
 
 from std.bit import byte_swap
-from std.algorithm import parallelize
-from std.ffi import external_call
+from std.collections import Array
 from std.sys.info import simd_width_of as simdwidthof
 
 from constants import initial_blowfish_state
@@ -12,10 +11,6 @@ comptime W = simdwidthof[DType.float64]()
 comptime REGISTER_BYTES = W * 8
 comptime U64_WIDTH = W
 comptime U32_WIDTH = W * 2
-
-
-def ensure_cpu_runtime():
-    _ = external_call["KGEN_CompilerRT_AsyncRT_GetOrCreateCPUDevice", Int]()
 
 
 @always_inline
@@ -67,7 +62,7 @@ def sha512_compress[
     block: UnsafePointer[UInt8, _],
 ):
     var words = state_bytes.bitcast[UInt64]()
-    var schedule = InlineArray[UInt64, 80](fill=0)
+    var schedule = Array[UInt64, 80](fill=0)
     for i in range(16):
         schedule[i] = load64_be(block, i * 8)
     for i in range(16, 80):
@@ -76,7 +71,7 @@ def sha512_compress[
         var s0 = rotr64(x, 1) ^ rotr64(x, 8) ^ (x >> 7)
         var s1 = rotr64(y, 19) ^ rotr64(y, 61) ^ (y >> 6)
         schedule[i] = schedule[i - 16] + s0 + schedule[i - 7] + s1
-    var constants: InlineArray[UInt64, 80] = [
+    var constants: Array[UInt64, 80] = [
         0x428A2F98D728AE22,
         0x7137449123EF65CD,
         0xB5C0FBCFEC4D3B2F,
@@ -191,7 +186,7 @@ def sha512_compress[
     words[7] += h
 
 
-def sha512_init() -> InlineArray[UInt64, 8]:
+def sha512_init() -> Array[UInt64, 8]:
     return [
         0x6A09E667F3BCC908,
         0xBB67AE8584CAA73B,
@@ -217,7 +212,7 @@ def sha512[
     while offset + 128 <= size:
         sha512_compress(state_ptr, source + offset)
         offset += 128
-    var final_blocks = InlineArray[UInt8, 256](fill=0)
+    var final_blocks = Array[UInt8, 256](fill=0)
     var final_ptr = UnsafePointer(to=final_blocks[0])
     var remainder = size - offset
     for i in range(remainder):
@@ -247,7 +242,7 @@ def sha512_salt_count[
     while offset + 128 <= salt_size:
         sha512_compress(state_ptr, salt + offset)
         offset += 128
-    var final_blocks = InlineArray[UInt8, 256](fill=0)
+    var final_blocks = Array[UInt8, 256](fill=0)
     var final_ptr = UnsafePointer(to=final_blocks[0])
     var remainder = salt_size - offset
     for i in range(remainder):
@@ -423,7 +418,7 @@ def bcrypt_hash[
     for _ in range(64):
         expand0(state_ptr, sha2salt)
         expand0(state_ptr, sha2pass)
-    var ciphertext: InlineArray[UInt32, 8] = [
+    var ciphertext: Array[UInt32, 8] = [
         0x4F787963,
         0x68726F6D,
         0x61746963,
@@ -461,9 +456,9 @@ def bcrypt_pbkdf_block[
     amount: Int,
     count: UInt32,
 ):
-    var sha2salt = InlineArray[UInt8, 64](fill=0)
-    var tmp = InlineArray[UInt8, 32](fill=0)
-    var block = InlineArray[UInt8, 32](fill=0)
+    var sha2salt = Array[UInt8, 64](fill=0)
+    var tmp = Array[UInt8, 32](fill=0)
+    var block = Array[UInt8, 32](fill=0)
     var salt_hash_ptr = UnsafePointer(to=sha2salt[0])
     var tmp_ptr = UnsafePointer(to=tmp[0])
     var block_ptr = UnsafePointer(to=block[0])
@@ -497,7 +492,7 @@ def bcrypt_pbkdf[
     destination_size: Int,
     rounds: Int,
 ):
-    var sha2pass = InlineArray[UInt8, 64](fill=0)
+    var sha2pass = Array[UInt8, 64](fill=0)
     var pass_ptr = UnsafePointer(to=sha2pass[0])
     sha512(password, password_size, pass_ptr)
     var stride = (destination_size + 31) // 32
@@ -517,11 +512,8 @@ def bcrypt_pbkdf[
             UInt32(block_index + 1),
         )
 
-    if destination_size <= 32:
-        derive_block(0)
-    else:
-        ensure_cpu_runtime()
-        parallelize[derive_block](stride)
+    for block_index in range(stride):
+        derive_block(block_index)
 
     for i in range(64):
         sha2pass[i] = 0
