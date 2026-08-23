@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from concurrent.futures import ThreadPoolExecutor
 import operator
 import warnings
 
@@ -14,6 +15,7 @@ __version__ = "0.1.0"
 _bytes_address = ctypes.pythonapi.PyBytes_AsString
 _bytes_address.argtypes = [ctypes.py_object]
 _bytes_address.restype = ctypes.c_void_p
+_workers = ThreadPoolExecutor(max_workers=16, thread_name_prefix="mojo-bcrypt")
 
 
 def kdf(
@@ -65,15 +67,37 @@ def kdf(
         )
 
     key_buffer = ctypes.create_string_buffer(desired_key_bytes)
-    result = lib().mbc_kdf(
-        _bytes_address(password),
-        len(password),
-        _bytes_address(salt),
-        len(salt),
-        ctypes.addressof(key_buffer),
-        desired_key_bytes,
-        rounds,
-    )
-    if result:
-        raise SystemError("bcrypt assertion failed")
+    password_address = _bytes_address(password)
+    salt_address = _bytes_address(salt)
+    destination_address = ctypes.addressof(key_buffer)
+    native = lib()
+    if desired_key_bytes <= 32:
+        if native.mbc_kdf(
+            password_address,
+            len(password),
+            salt_address,
+            len(salt),
+            destination_address,
+            desired_key_bytes,
+            rounds,
+        ):
+            raise SystemError("bcrypt assertion failed")
+    else:
+        block_count = (desired_key_bytes + 31) // 32
+
+        def derive_block(block_index):
+            return native.mbc_kdf_block(
+                password_address,
+                len(password),
+                salt_address,
+                len(salt),
+                destination_address,
+                desired_key_bytes,
+                rounds,
+                block_index,
+            )
+
+        results = list(_workers.map(derive_block, range(block_count)))
+        if any(results):
+            raise SystemError("bcrypt assertion failed")
     return key_buffer.raw

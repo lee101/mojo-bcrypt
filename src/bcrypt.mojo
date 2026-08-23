@@ -354,9 +354,22 @@ def encipher(
 ) -> Tuple[UInt32, UInt32]:
     var left = left_input ^ state[0]
     var right = right_input
-    for i in range(1, 17, 2):
-        right ^= blowfish_f(state, left) ^ state[i]
-        left ^= blowfish_f(state, right) ^ state[i + 1]
+    right ^= blowfish_f(state, left) ^ state[1]
+    left ^= blowfish_f(state, right) ^ state[2]
+    right ^= blowfish_f(state, left) ^ state[3]
+    left ^= blowfish_f(state, right) ^ state[4]
+    right ^= blowfish_f(state, left) ^ state[5]
+    left ^= blowfish_f(state, right) ^ state[6]
+    right ^= blowfish_f(state, left) ^ state[7]
+    left ^= blowfish_f(state, right) ^ state[8]
+    right ^= blowfish_f(state, left) ^ state[9]
+    left ^= blowfish_f(state, right) ^ state[10]
+    right ^= blowfish_f(state, left) ^ state[11]
+    left ^= blowfish_f(state, right) ^ state[12]
+    right ^= blowfish_f(state, left) ^ state[13]
+    left ^= blowfish_f(state, right) ^ state[14]
+    right ^= blowfish_f(state, left) ^ state[15]
+    left ^= blowfish_f(state, right) ^ state[16]
     return (right ^ state[17], left)
 
 
@@ -550,4 +563,50 @@ def mbc_kdf(
         destination_size,
         rounds,
     )
+    return 0
+
+
+@export("mbc_kdf_block")
+def mbc_kdf_block(
+    password_address: Int,
+    password_size: Int,
+    salt_address: Int,
+    salt_size: Int,
+    destination_address: Int,
+    destination_size: Int,
+    rounds: Int,
+    block_index: Int,
+) abi("C") -> Int:
+    var stride = (destination_size + 31) // 32
+    if (
+        password_address == 0
+        or salt_address == 0
+        or destination_address == 0
+        or password_size <= 0
+        or salt_size <= 0
+        or destination_size <= 32
+        or destination_size > 512
+        or rounds < 1
+        or rounds > 0xFFFFFFFF
+        or block_index < 0
+        or block_index >= stride
+    ):
+        return -1
+    var sha2pass = Array[UInt8, 64](fill=0)
+    var pass_ptr = UnsafePointer(to=sha2pass[0])
+    sha512(bptr(password_address), password_size, pass_ptr)
+    var amount = (destination_size + stride - 1) // stride
+    bcrypt_pbkdf_block(
+        pass_ptr,
+        bptr(salt_address),
+        salt_size,
+        bptr(destination_address),
+        destination_size,
+        rounds,
+        stride,
+        amount,
+        UInt32(block_index + 1),
+    )
+    for i in range(64):
+        sha2pass[i] = 0
     return 0

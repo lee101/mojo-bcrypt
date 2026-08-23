@@ -5,8 +5,9 @@ key derivation function used by OpenBSD and OpenSSH. Its Python `kdf` function
 has the same name, signature, validation, warning behavior, and byte output as
 `bcrypt.kdf`.
 
-The SHA-512 and EksBlowfish work runs in compiled Mojo. The Python layer only
-validates arguments, owns the input/output buffers, and makes one ctypes call.
+The SHA-512 and EksBlowfish work runs in compiled Mojo. The Python layer
+validates arguments, owns the input/output buffers, and dispatches independent
+output blocks to compiled Mojo.
 
 This project has not received an independent cryptographic audit. Use the
 established upstream `bcrypt` package when that assurance matters more than
@@ -75,7 +76,7 @@ password hashing.
 
 ## Benchmarks
 
-Measured by running `pixi run bench` on this machine on July 29, 2026. The
+Measured by running `pixi run bench` on this machine on August 23, 2026. The
 script takes the best of three runs after loading and warming the shared
 library. Both columns include the same Python-call overhead. `upstream / Mojo`
 above 1 means Mojo is faster.
@@ -85,14 +86,18 @@ Machine: Intel(R) Xeon(R) CPU E5-2697 v4 @ 2.30GHz, Linux x86_64, Python
 
 | case | mojo-bcrypt | bcrypt | upstream / Mojo | result |
 |---|---:|---:|---:|---|
-| 32-byte key, 50 rounds | 235.83 ms | 259.67 ms | 1.10x | faster |
-| 64-byte key, 50 rounds | 239.97 ms | 531.47 ms | 2.21x | faster |
-| 32-byte key, 100 rounds | 467.16 ms | 515.72 ms | 1.10x | faster |
+| 32-byte key, 50 rounds | 223.73 ms | 242.68 ms | 1.08x | faster |
+| 64-byte key, 50 rounds | 224.65 ms | 521.53 ms | 2.32x | faster |
+| 32-byte key, 100 rounds | 452.08 ms | 519.29 ms | 1.15x | faster |
 
 These are measurements from one shared factory host, not universal performance
 claims. Run `pixi run bench` on the deployment machine for relevant numbers.
 
-There is no GPU path.
+There is no GPU path. The dominant Blowfish expansion is a serial dependency
+chain with four irregular 32-bit table loads per F-function and fewer than two
+integer operations per byte loaded. A KDF call also exposes only 1-16 output
+blocks. That arithmetic intensity and limited parallelism do not justify GPU
+transfer and launch overhead.
 
 ## How it works
 
@@ -103,16 +108,18 @@ state lives in `src/constants.mojo`. The build produces one shared object,
 `dist/libmojo-bcrypt.so`.
 
 The fixed-width key mixing and round folding use native-width SIMD with
-unaligned-safe loads and stores plus scalar tails. Independent output blocks
-are derived concurrently when more than one block is needed.
+unaligned-safe loads and stores plus scalar tails. The fixed Blowfish encipher
+rounds are unrolled. Independent output blocks are derived concurrently when
+more than one block is needed; single-block outputs stay serial.
 
 The C ABI transports buffers as integer addresses. The CPython wrapper keeps
 the password and salt `bytes` objects alive for the whole native call, allocates
 the output buffer, and passes non-null addresses with explicit lengths. Mojo
 validates the boundary values before reconstructing byte pointers, writes into
-the caller-owned output buffer, and returns a checked status code. There is one
-FFI call per KDF operation.
+the caller-owned output buffer, and returns a checked status code. Single-block
+outputs use one FFI call; multi-block outputs use one call per independent block
+and write disjoint positions in the same output buffer.
 
-The Blowfish state and SHA-512 work buffers use contiguous `InlineArray`
+The Blowfish state and SHA-512 work buffers use contiguous fixed-size `Array`
 storage. Password-derived and per-block working buffers are overwritten before
 returning.

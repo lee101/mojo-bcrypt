@@ -16,6 +16,7 @@ LIB = os.environ.get("MOJO_BCRYPT_LIB") or os.path.join(
 I = ctypes.c_int64
 _SIGNATURES = {
     "mbc_kdf": ([I, I, I, I, I, I, I], I),
+    "mbc_kdf_block": ([I, I, I, I, I, I, I, I], I),
 }
 
 

@@ -1,3 +1,4 @@
+import ctypes
 import inspect
 import os
 import warnings
@@ -178,6 +179,23 @@ def test_non_boolean_ignore_flag_matches_upstream():
 )
 def test_native_boundary_rejects_invalid_arguments(arguments):
     assert lib().mbc_kdf(*arguments) == -1
+
+
+@pytest.mark.parametrize("block_index", [-1, 2])
+def test_native_parallel_block_boundary_rejects_invalid_index(block_index):
+    password = ctypes.create_string_buffer(b"p")
+    salt = ctypes.create_string_buffer(b"s")
+    destination = ctypes.create_string_buffer(33)
+    assert lib().mbc_kdf_block(
+        ctypes.addressof(password),
+        1,
+        ctypes.addressof(salt),
+        1,
+        ctypes.addressof(destination),
+        33,
+        1,
+        block_index,
+    ) == -1
 
 
 def test_input_buffers_remain_alive_for_native_call():
